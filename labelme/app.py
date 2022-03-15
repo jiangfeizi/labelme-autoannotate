@@ -12,6 +12,9 @@ from qtpy import QtCore
 from qtpy.QtCore import Qt
 from qtpy import QtGui
 from qtpy import QtWidgets
+import numpy as np
+import importlib
+import cv2
 
 from labelme import __appname__
 from labelme import PY2
@@ -566,6 +569,18 @@ class MainWindow(QtWidgets.QMainWindow):
         )
         fill_drawing.trigger()
 
+        self.inferer = importlib.import_module("labelme."+config["inferdll"]).Infer()
+        infer = action(
+            self.tr("&Infer"),
+            self.infer_image,
+            icon="help",
+        )
+        export = action(
+            self.tr("&Export"),
+            icon="save-as",
+        )
+
+
         # Lavel list context menu.
         labelMenu = QtWidgets.QMenu()
         utils.addActions(labelMenu, (edit, delete))
@@ -747,6 +762,8 @@ class MainWindow(QtWidgets.QMainWindow):
             None,
             zoom,
             fitWidth,
+            infer,
+            export,
         )
 
         self.statusBar().showMessage(str(self.tr("%s started.")) % __appname__)
@@ -822,6 +839,48 @@ class MainWindow(QtWidgets.QMainWindow):
         # self.firstStart = True
         # if self.firstStart:
         #    QWhatsThis.enterWhatsThisMode()
+
+    def get_numpy(self):
+        scale = 0.01 * self.zoomWidget.value()
+        image = cv2.imdecode(np.fromfile(self.imagePath, dtype=np.uint8), flags=cv2.IMREAD_COLOR)
+        height = int(image.shape[0] * scale + 0.5)
+        width = int(image.shape[1] * scale + 0.5)
+        image = cv2.resize(image, (width, height), interpolation=cv2.INTER_LINEAR)
+        return image
+
+    def add_shapes(self, shapes):
+        scale = 0.01 * self.zoomWidget.value()
+        for shape in shapes:
+            qt_shape = Shape(shape['label'], shape_type=shape['shape_type'], flags=shape['flags'])
+            if shape['shape_type'] == 'rectangle' or shape['shape_type'] == 'line' or shape['shape_type'] == 'circle':
+                qt_shape.points = [QtCore.QPoint(shape['points'][0][0] / scale, shape['points'][0][1] / scale), 
+                                    QtCore.QPoint(shape['points'][1][0] / scale, shape['points'][1][1] / scale)]
+            if shape['shape_type'] == 'polygon' or shape['shape_type'] == 'linestrip':
+                qt_shape.points = [QtCore.QPoint(point[0] / scale, point[1] / scale) for point in shape['points']]
+            if shape['shape_type'] == 'point':
+                qt_shape.points = [QtCore.QPoint(shape['points'][0][0] / scale, shape['points'][0][1] / scale)]
+            qt_shape.close()
+            self.canvas.shapes.append(qt_shape)
+            self.canvas.setHiding(False)
+            self.addLabel(qt_shape)
+
+        self.labelList.clearSelection()
+        self.canvas.current = None
+        self.canvas.storeShapes()
+        self.canvas.update()
+
+        self.actions.editMode.setEnabled(True)
+        self.actions.undoLastPoint.setEnabled(False)
+        self.actions.undo.setEnabled(True)
+        self.setDirty()
+
+    def infer_image(self):
+        if not self.image.isNull():
+            self.remLabels(self.canvas.shapes)
+            image = self.get_numpy()
+            shapes = self.inferer.predict(image)
+            self.add_shapes(shapes)
+
 
     def menu(self, title, actions=None):
         menu = self.menuBar().addMenu(title)

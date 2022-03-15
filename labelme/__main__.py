@@ -5,7 +5,7 @@ import os
 import os.path as osp
 import sys
 import yaml
-
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from qtpy import QtCore
 from qtpy import QtWidgets
 
@@ -106,6 +106,11 @@ def main():
         type=float,
         help="epsilon to find nearest vertex on canvas",
         default=argparse.SUPPRESS,
+    )
+    parser.add_argument(
+        "--inferdll",
+        help="dll to infer",
+        default="ryolov5",
     )
     args = parser.parse_args()
 
