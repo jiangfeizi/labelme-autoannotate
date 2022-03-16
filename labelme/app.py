@@ -16,6 +16,15 @@ from qtpy import QtWidgets
 import numpy as np
 import importlib
 import cv2
+import shutil
+import json
+from datetime import datetime
+from datetime import timedelta
+from datetime import timezone
+SHA_TZ = timezone(
+    timedelta(hours=8),
+    name='Asia/Shanghai',
+)
 
 from labelme import __appname__
 from labelme import PY2
@@ -576,8 +585,14 @@ class MainWindow(QtWidgets.QMainWindow):
             self.infer_image,
             icon="help",
         )
+        clean = action(
+            self.tr("&Clean"),
+            self.clean_labels,
+            icon="cancel",
+        )
         export = action(
             self.tr("&Export"),
+            self.export_label,
             icon="save-as",
         )
 
@@ -763,7 +778,9 @@ class MainWindow(QtWidgets.QMainWindow):
             None,
             zoom,
             fitWidth,
+            None,
             infer,
+            clean,
             export,
         )
 
@@ -834,7 +851,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def get_numpy(self):
         scale = 0.01 * self.zoomWidget.value()
-        image = cv2.imdecode(np.fromfile(self.imagePath, dtype=np.uint8), flags=cv2.IMREAD_COLOR)
+        image = cv2.imdecode(np.frombuffer(self.imageData, dtype=np.uint8), flags=cv2.IMREAD_COLOR)
         height = int(image.shape[0] * scale + 0.5)
         width = int(image.shape[1] * scale + 0.5)
         image = cv2.resize(image, (width, height), interpolation=cv2.INTER_LINEAR)
@@ -873,6 +890,30 @@ class MainWindow(QtWidgets.QMainWindow):
             shapes = self.inferer.predict(image)
             self.add_shapes(shapes)
 
+    def export_label(self):
+        for i in range(self.fileListWidget.count()):
+            item = self.fileListWidget.item(i)
+            if item.checkState():
+                image_path = item.text()
+                ext = os.path.splitext(image_path)[1]
+                image_name_no_ext = datetime.utcnow().replace(tzinfo=timezone.utc).astimezone(SHA_TZ).strftime('%Y-%m-%d-%H-%M-%S-%f')[:-3]
+                label_file = osp.splitext(image_path)[0] + ".json"
+                if self.output_dir:
+                    label_file_without_path = osp.basename(label_file)
+                    label_file = osp.join(self.output_dir, label_file_without_path)
+                data = json.load(open(label_file, 'r', encoding='utf8'))
+                if data['shapes']:
+                    data['imagePath'] = image_name_no_ext + ext
+                    shutil.copy(image_path, os.path.join(os.path.dirname(__file__), '../output' ,image_name_no_ext + ext))
+                    json.dump(data, open(os.path.join(os.path.dirname(__file__), '../output' ,image_name_no_ext + '.json'), 'w', encoding='utf8'))
+
+    def clean_labels(self):
+        self.remLabels(self.canvas.shapes)
+        items = self.fileListWidget.selectedItems()
+        if not items:
+            return
+        item = items[0]
+        item.setCheckState(0)
 
     def menu(self, title, actions=None):
         menu = self.menuBar().addMenu(title)
@@ -1316,7 +1357,7 @@ class MainWindow(QtWidgets.QMainWindow):
             flag = item.checkState() == Qt.Checked
             flags[key] = flag
         try:
-            imagePath = osp.relpath(self.imagePath, osp.dirname(filename))
+            imagePath = os.path.split(filename)[1]
             imageData = self.imageData if self._config["store_data"] else None
             if osp.dirname(filename) and not osp.exists(osp.dirname(filename)):
                 os.makedirs(osp.dirname(filename))
@@ -1661,6 +1702,12 @@ class MainWindow(QtWidgets.QMainWindow):
         self.canvas.scale = 0.01 * self.zoomWidget.value()
         self.canvas.adjustSize()
         self.canvas.update()
+
+        if not self.image.isNull():
+            scale = 0.01 * self.zoomWidget.value()
+            height = int(self.image.height() * scale + 0.5)
+            width = int(self.image.width() * scale + 0.5)
+            self.statusBar().showMessage(f'{height} * {width}')
 
     def adjustScale(self, initial=False):
         value = self.scalers[self.FIT_WINDOW if initial else self.zoomMode]()

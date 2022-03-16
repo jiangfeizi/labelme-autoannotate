@@ -117,7 +117,7 @@ class Infer(labelme.inference.Infer):
         shapes = []
         height = int(image.shape[0] / 32 + 0.5) * 32
         width = int(image.shape[1] / 32 + 0.5) * 32
-        image, ratio, (dw, dh) = letterbox(image, (640, 640), (0, 0, 0), False)
+        image, ratio, (dw, dh) = letterbox(image, (height, width), (0, 0, 0), False)
         image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)[..., None]
         image = image.transpose((2, 0, 1))
         image = np.ascontiguousarray(image)

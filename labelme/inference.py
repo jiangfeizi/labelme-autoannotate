@@ -2,9 +2,6 @@ import pkg_resources as pkg
 from subprocess import check_output
 
 
-
-
-
 class Infer:
     @staticmethod
     def install_requirements(requirements):
