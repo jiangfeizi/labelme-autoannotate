@@ -8,6 +8,8 @@ import cv2
 import onnxruntime
 import shapely
 import shapely.geometry
+import math
+import os
 
 def letterbox(im, new_shape=(640, 640), color=(114, 114, 114), auto=True, scaleFill=False, scaleup=True, stride=32):
     # Resize and pad image while meeting stride-multiple constraints
@@ -56,7 +58,7 @@ def xywhrm2xyxyxyxy(xywhrm):
     xyxyxyxy = np.matmul(xyxyxyxy, R).reshape(-1, 8)+xywhrm[:, [0, 1, 0, 1, 0, 1, 0, 1]]
     return xyxyxyxy
 
-def non_max_suppression(prediction, conf_thres=0.25, iou_thres=0.45, max_det=300):
+def non_max_suppression(prediction, conf_thres=0.25, iou_thres=0.45, max_det=300, top_num=1):
     output = []
     max_nms = 30000
 
@@ -87,9 +89,13 @@ def non_max_suppression(prediction, conf_thres=0.25, iou_thres=0.45, max_det=300
         output.append((box1, cl))
 
         pop_indexes = []
+        num = 0
         for index, box2 in enumerate(boxes):
             if polygon_inter_union_cpu(box1, box2) > iou_thres:
                 pop_indexes.append(index)
+                if num < top_num - 1:
+                    output.append((boxes[index], class_best[index]))
+                    num += 1
         for index in pop_indexes[::-1]:
             boxes.pop(index)
             class_best.pop(index)
@@ -113,11 +119,9 @@ class Infer(labelme.inference.Infer):
         providers = ['CUDAExecutionProvider', 'CPUExecutionProvider'] if cuda else ['CPUExecutionProvider']
         self.session = onnxruntime.InferenceSession(self.weight, providers=providers)
 
-    def predict(self, image) -> list:
+    def predict(self, image, scale) -> list:
         shapes = []
-        height = int(image.shape[0] / 32 + 0.5) * 32
-        width = int(image.shape[1] / 32 + 0.5) * 32
-        image, ratio, (dw, dh) = letterbox(image, (height, width), (0, 0, 0), False)
+        image, ratio, (dw, dh) = letterbox(image, (scale, scale), (0, 0, 0), False)
         image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)[..., None]
         image = image.transpose((2, 0, 1))
         image = np.ascontiguousarray(image)
@@ -125,16 +129,34 @@ class Infer(labelme.inference.Infer):
         if len(image.shape) == 3:
             image = image[None]  # expand for batch dim
         prediction = self.session.run([self.session.get_outputs()[0].name], {self.session.get_inputs()[0].name: image})[0]
-        output = non_max_suppression(prediction, 0.25, 0.05)
+        output = non_max_suppression(prediction, 0.5, 0.05, top_num=1)
         for box, cl in output:
             box[0] = (box[0] -dw) / ratio[0]
-            box[1] = (box[1] -dh) / ratio[0]
+            box[1] = (box[1] -dh) / ratio[1]
             box[2] = (box[2] -dw) / ratio[0]
-            box[3] = (box[3] -dh) / ratio[0]
+            box[3] = (box[3] -dh) / ratio[1]
             box[4] = (box[4] -dw) / ratio[0]
-            box[5] = (box[5] -dh) / ratio[0]
+            box[5] = (box[5] -dh) / ratio[1]
             box[6] = (box[6] -dw) / ratio[0]
-            box[7] = (box[7] -dh) / ratio[0]
+            box[7] = (box[7] -dh) / ratio[1]
             shapes.append(self.get_shape(self.classes[cl] if self.classes else str(cl), 
                             [[box[0], box[1]], [box[2], box[3]], [box[4], box[5]], [box[6], box[7]]], 'polygon'))
         return shapes
+
+    def export(self, data, save_dir):
+        txt_path = os.path.join(save_dir, os.path.splitext(data['imagePath'])[0]+'.txt')
+
+        width = data['imageWidth']
+        height = data['imageHeight']
+        all_label = [self.classes.index(shape['label']) for shape in data['shapes']]
+        points_array = [np.array(shape['points'], dtype=np.float32) for shape in data['shapes']]
+        rotate_rects = [cv2.minAreaRect(points) for points in points_array]
+        all_x = [rect[0][0] / width for rect in rotate_rects]
+        all_y = [rect[0][1] / height for rect in rotate_rects]
+        all_w = [rect[1][0] / width for rect in rotate_rects]
+        all_h = [rect[1][1] / height for rect in rotate_rects]
+        all_angle = [rect[2] / 180 * math.pi for rect in rotate_rects]
+        lines = ['{} {} {} {} {} {} {}\n'.format(label, x, y, w, h, math.cos(angle), math.sin(angle)) 
+                    for label, x, y, w, h, angle in zip(all_label, all_x, all_y, all_w, all_h, all_angle)]
+        
+        open(txt_path, 'w', encoding='utf8').writelines(lines)

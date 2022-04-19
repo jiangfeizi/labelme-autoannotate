@@ -579,19 +579,36 @@ class MainWindow(QtWidgets.QMainWindow):
         )
         fill_drawing.trigger()
 
+        self.scale_widget = QtWidgets.QSpinBox()
+        self.scale_widget.setMaximum(19200)
+        self.scale_widget.setMinimum(256)
+        self.scale_widget.setSingleStep(32)
+        self.scale_widget.setKeyboardTracking(False)
+        infer_zoom = QtWidgets.QWidgetAction(self)
+        infer_zoom.setDefaultWidget(self.scale_widget)
+        self.scale_widget.valueChanged.connect(self.scale_change)
+
+        self.infer_flag = False
         self.inferer = importlib.import_module("labelme."+config["inferdll"]).Infer()
         infer = action(
             self.tr("&Infer"),
-            self.infer_image,
+            self.set_infer,
             icon="help",
+            checkable=True,
+            enabled=True,
         )
         clean = action(
             self.tr("&Clean"),
             self.clean_labels,
             icon="cancel",
         )
-        export = action(
-            self.tr("&Export"),
+        export_single = action(
+            self.tr("&ESingle"),
+            self.export_single_label,
+            icon="save-as",
+        )
+        export_all = action(
+            self.tr("&EAll"),
             self.export_label,
             icon="save-as",
         )
@@ -772,16 +789,17 @@ class MainWindow(QtWidgets.QMainWindow):
             duplicate,
             copy,
             paste,
-            delete,
             undo,
             brightnessContrast,
             None,
             zoom,
             fitWidth,
             None,
+            infer_zoom,
             infer,
             clean,
-            export,
+            export_single,
+            export_all,
         )
 
         self.statusBar().showMessage(str(self.tr("%s started.")) % __appname__)
@@ -849,25 +867,16 @@ class MainWindow(QtWidgets.QMainWindow):
         # if self.firstStart:
         #    QWhatsThis.enterWhatsThisMode()
 
-    def get_numpy(self):
-        scale = 0.01 * self.zoomWidget.value()
-        image = cv2.imdecode(np.frombuffer(self.imageData, dtype=np.uint8), flags=cv2.IMREAD_COLOR)
-        height = int(image.shape[0] * scale + 0.5)
-        width = int(image.shape[1] * scale + 0.5)
-        image = cv2.resize(image, (width, height), interpolation=cv2.INTER_LINEAR)
-        return image
-
     def add_shapes(self, shapes):
-        scale = 0.01 * self.zoomWidget.value()
         for shape in shapes:
             qt_shape = Shape(shape['label'], shape_type=shape['shape_type'], flags=shape['flags'])
             if shape['shape_type'] == 'rectangle' or shape['shape_type'] == 'line' or shape['shape_type'] == 'circle':
-                qt_shape.points = [QtCore.QPoint(shape['points'][0][0] / scale, shape['points'][0][1] / scale), 
-                                    QtCore.QPoint(shape['points'][1][0] / scale, shape['points'][1][1] / scale)]
+                qt_shape.points = [QtCore.QPoint(shape['points'][0][0], shape['points'][0][1]), 
+                                    QtCore.QPoint(shape['points'][1][0], shape['points'][1][1])]
             if shape['shape_type'] == 'polygon' or shape['shape_type'] == 'linestrip':
-                qt_shape.points = [QtCore.QPoint(point[0] / scale, point[1] / scale) for point in shape['points']]
+                qt_shape.points = [QtCore.QPoint(point[0], point[1]) for point in shape['points']]
             if shape['shape_type'] == 'point':
-                qt_shape.points = [QtCore.QPoint(shape['points'][0][0] / scale, shape['points'][0][1] / scale)]
+                qt_shape.points = [QtCore.QPoint(shape['points'][0][0], shape['points'][0][1])]
             qt_shape.close()
             self.canvas.shapes.append(qt_shape)
             self.canvas.setHiding(False)
@@ -883,12 +892,37 @@ class MainWindow(QtWidgets.QMainWindow):
         self.actions.undo.setEnabled(True)
         self.setDirty()
 
+    def scale_change(self):
+        if self.infer_flag:
+            self.infer_image()
+
+    def set_infer(self, value=True):
+        self.infer_flag = value
+        if value:
+            self.infer_image()
+
     def infer_image(self):
         if not self.image.isNull():
             self.remLabels(self.canvas.shapes)
-            image = self.get_numpy()
-            shapes = self.inferer.predict(image)
+            image = cv2.imdecode(np.frombuffer(self.imageData, dtype=np.uint8), flags=cv2.IMREAD_COLOR)
+            shapes = self.inferer.predict(image, self.scale_widget.value())
             self.add_shapes(shapes)
+
+    def export_single_label(self):
+        image_path = self.filename
+        ext = os.path.splitext(image_path)[1]
+        image_name_no_ext = datetime.utcnow().replace(tzinfo=timezone.utc).astimezone(SHA_TZ).strftime('%Y-%m-%d-%H-%M-%S-%f')[:-3]
+        label_file = osp.splitext(image_path)[0] + ".json"
+        if self.output_dir:
+            label_file_without_path = osp.basename(label_file)
+            label_file = osp.join(self.output_dir, label_file_without_path)
+        self._saveFile(label_file)
+        data = json.load(open(label_file, 'r', encoding='utf8'))
+        if data['shapes']:
+            data['imagePath'] = image_name_no_ext + ext
+            shutil.copy(image_path, os.path.join(os.path.dirname(__file__), '../output' ,image_name_no_ext + ext))
+            json.dump(data, open(os.path.join(os.path.dirname(__file__), '../output' ,image_name_no_ext + '.json'), 'w', encoding='utf8'))
+            self.inferer.export(data, os.path.join(os.path.dirname(__file__), '../output'))
 
     def export_label(self):
         for i in range(self.fileListWidget.count()):
@@ -906,6 +940,7 @@ class MainWindow(QtWidgets.QMainWindow):
                     data['imagePath'] = image_name_no_ext + ext
                     shutil.copy(image_path, os.path.join(os.path.dirname(__file__), '../output' ,image_name_no_ext + ext))
                     json.dump(data, open(os.path.join(os.path.dirname(__file__), '../output' ,image_name_no_ext + '.json'), 'w', encoding='utf8'))
+                    self.inferer.export(data, os.path.join(os.path.dirname(__file__), '../output'))
 
     def clean_labels(self):
         self.remLabels(self.canvas.shapes)
@@ -1686,6 +1721,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.toggleActions(True)
         self.canvas.setFocus()
         self.status(str(self.tr("Loaded %s")) % osp.basename(str(filename)))
+        if self.infer_flag and not self.canvas.shapes:
+            self.infer_image()
         return True
 
     def resizeEvent(self, event):
@@ -1702,12 +1739,6 @@ class MainWindow(QtWidgets.QMainWindow):
         self.canvas.scale = 0.01 * self.zoomWidget.value()
         self.canvas.adjustSize()
         self.canvas.update()
-
-        if not self.image.isNull():
-            scale = 0.01 * self.zoomWidget.value()
-            height = int(self.image.height() * scale + 0.5)
-            width = int(self.image.width() * scale + 0.5)
-            self.statusBar().showMessage(f'{height} * {width}')
 
     def adjustScale(self, initial=False):
         value = self.scalers[self.FIT_WINDOW if initial else self.zoomMode]()

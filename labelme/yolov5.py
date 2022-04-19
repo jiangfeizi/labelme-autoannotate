@@ -119,11 +119,9 @@ class Infer(labelme.inference.Infer):
         providers = ['CUDAExecutionProvider', 'CPUExecutionProvider'] if cuda else ['CPUExecutionProvider']
         self.session = onnxruntime.InferenceSession(self.weight, providers=providers)
 
-    def predict(self, image) -> list:
+    def predict(self, image, scale) -> list:
         shapes = []
-        height = int(image.shape[0] / 32 + 0.5) * 32
-        width = int(image.shape[1] / 32 + 0.5) * 32
-        image, ratio, (dw, dh) = letterbox(image, (height, width), (0, 0, 0), False)
+        image, ratio, (dw, dh) = letterbox(image, (scale, scale), (0, 0, 0), False)
         image = image.transpose((2, 0, 1))[::-1]  # HWC to CHW, BGR to RGB
         image = np.ascontiguousarray(image)
         image = np.array(image, dtype=np.float32) / 255
