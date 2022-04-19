@@ -613,6 +613,11 @@ class MainWindow(QtWidgets.QMainWindow):
             icon="save-as",
         )
 
+        self.key_actions = []
+        for index, key in enumerate(config['flags']):
+            self.key_actions.append(action(key, lambda _, index = index: self.classify(index), shortcut=str(index + 1)))
+        self.key_actions.append(None)
+        self.key_actions.append(action('quick_next', checkable=True, checked=True))
 
         # Lavel list context menu.
         labelMenu = QtWidgets.QMenu()
@@ -713,6 +718,7 @@ class MainWindow(QtWidgets.QMainWindow):
             edit=self.menu(self.tr("&Edit")),
             view=self.menu(self.tr("&View")),
             help=self.menu(self.tr("&Help")),
+            key=self.menu(self.tr("&Key")),
             recentFiles=QtWidgets.QMenu(self.tr("Open &Recent")),
             labelList=labelMenu,
         )
@@ -761,6 +767,8 @@ class MainWindow(QtWidgets.QMainWindow):
                 brightnessContrast,
             ),
         )
+
+        utils.addActions(self.menus.key, self.key_actions)
 
         self.menus.file.aboutToShow.connect(self.updateFileMenu)
 
@@ -866,6 +874,19 @@ class MainWindow(QtWidgets.QMainWindow):
         # self.firstStart = True
         # if self.firstStart:
         #    QWhatsThis.enterWhatsThisMode()
+
+    def classify(self, index):
+        if self.key_actions[-1].isChecked():
+            for i in range(self.flag_widget.count()):
+                item = self.flag_widget.item(i)
+                if i == index:
+                    item.setCheckState(Qt.Checked)
+                else:
+                    item.setCheckState(Qt.Unchecked)
+            self.openNextImg()
+        else:
+            item = self.flag_widget.item(index)
+            item.setCheckState(Qt.Checked)
 
     def add_shapes(self, shapes):
         for shape in shapes:

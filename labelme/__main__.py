@@ -73,7 +73,7 @@ def main():
     parser.add_argument(
         "--flags",
         help="comma separated list of flags OR file containing flags",
-        default=argparse.SUPPRESS,
+        default='don,cat',
     )
     parser.add_argument(
         "--labelflags",
